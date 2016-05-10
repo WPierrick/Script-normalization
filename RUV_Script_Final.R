@@ -40,11 +40,11 @@ sample_file="PD_Targets_09May2016.csv"
 #twin=read.table(twin, header=T)
 
 ## Specify covariates for which methylation data should be adjusted
-covariates=c("SAMPLE.SET", "Gender", "Phenotype", "Sex", "Sample.Well.for.Sample.Sheet", "Sentrix.Barcode", "Sample.Section")
+covariates=c("SAMPLE.SET", "Gender", "Phenotype", "Sample.Well.for.Sample.Sheet", "Sentrix.Barcode", "Sample.Section")
 
 ## read in targets and idats
 targets=read.csv(sample_file, header=T, stringsAsFactor=F)
-targets$"Sentrix.Barcode" <- as.factor(targets$"Sentrix.Barcode")
+targets$"X2D.MATRIX.ID" <- as.factor(targets$"X2D.MATRIX.ID")
 #targets=subset(targets, targets$Cohort == "QLD")
 
 #rgSet=read.450k.exp(base=data, targets=targets,recursive=TRUE);
@@ -64,6 +64,25 @@ barplot(apply(detP,2,mean), main="mean detection p-values", col=as.factor(target
 abline(h=0.001,col="red")
 dev.off()
 
+#MDS plot on raw beta
+png("01_MDS_plot.png")
+mdsPlot(RGset, sampNames = targets$SAMPLE.SET, sampGroups = targets$SAMPLE.SET, 
+        pch = 1, pal = brewer.pal(8, "Dark2"), legendPos = "bottomleft",
+        legendNCol, main = NULL)
+
+
+
+png("01_bisMDS_plot.png")
+par(mfrow=c(1,1))
+plotMDS(RGset, labels=targets$Phenotype, col=as.integer(factor(targets$Phenotype)))
+legend("topleft", legend=c("PD", "Control"), pch=16,cex=1.2,col=1:2)
+dev.off()
+
+
+png("01_bis2MDS_plot.png")
+par(mfrow=c(1,1))
+plotMDS(RGset)
+dev.off()
 
 # Density plot 
 jpeg("01_densityplotgender.jpg")
@@ -76,6 +95,10 @@ jpeg("01_densityplotphenotype.jpg")
 densityPlot(RGset, sampGroups = targets$Phenotype, main = "Beta sorted by phenotype", xlab = "Beta")
 dev.off()
 
+
+#Get a Mset raw
+MSet.raw <- preprocessRaw(RGset)
+save(MSet.raw , file="MSet.raw.RObject")
 
 ## Pre-process the data after excluding poor quality samples
 set.seed(100)
@@ -91,13 +114,14 @@ save(targets, file="targets.RObject")
 save(detP, file="detP.RObject")
 
 pdf("02-detection-p-values-after-removal.pdf", width=14)
-barplot(apply(detP,2,mean), main="Mean detection p-values after renoval", col=as.factor(targets$SAMPLE.SET), xaxt="none")
+barplot(apply(detP,2,mean), main="Mean detection p-values after renoval", col=as.factor(targets$X2D.MATRIX.ID), xaxt="none")
 abline(h=0.001,col="red")
 dev.off()
 
 #Identify the removed individuals
-comp <- apply(colnames(detP) == colnames(detP_raw), 1, all)
-save(which(comp == FALSE), file="removedindiv.RObject")
+out <- which(!colnames(detP_raw)%in%colnames(detP))
+IDremoved <- colnames(detP_raw)[out]
+save(IDremoved, file="removedindiv.RObject")
 
 ## Remove poor quality probes
 keepProbes = rowSums(detP < 0.001) == ncol(detP) 
@@ -107,15 +131,15 @@ gmSetQFlt = gmSetQFlt[match(featureNames(mSetSwFlt),featureNames(gmSetQFlt)),]
 
 
 # Density plot 
-jpeg("02_densityplotgender.jpg")
-densityPlot(detP, sampGroups = targets$Gender, main = "Beta sorted by gender", xlab = "Beta")
-dev.off()
-jpeg("02_densityplotsampleset.jpg")
-densityPlot(detP, sampGroups = targets$SAMPLE.SET, main = "Beta by sample set", xlab = "Beta")
-dev.off()
-jpeg("02_densityplotphenotype.jpg")
-densityPlot(detP, sampGroups = targets$Phenotype, main = "Beta sorted by phenotype", xlab = "Beta")
-dev.off()
+#jpeg("02_densityplotgender.jpg")
+#densityPlot(detP, sampGroups = targets$Gender, main = "Beta sorted by gender", xlab = "Beta")
+#dev.off()
+#jpeg("02_densityplotsampleset.jpg")
+#densityPlot(detP, sampGroups = targets$SAMPLE.SET, main = "Beta by sample set", xlab = "Beta")
+#dev.off()
+#jpeg("02_densityplotphenotype.jpg")
+#densityPlot(detP, sampGroups = targets$Phenotype, main = "Beta sorted by phenotype", xlab = "Beta")
+#dev.off()
 
 
 
@@ -141,25 +165,46 @@ gmSetQFlt = gmSetQFlt[autosomes,]
 mValsSw = getM(gmSetSwFlt)
 mValsSq = getM(gmSetQFlt)
 
-save(gmSetSwFlt, file="gmSetSwFlt.RObject") # Methylset using SWAN normalization
-save(gmSetQFlt, file="gmSetQFlt.RObject") # Methylset using quantile normalization
-save(mValsSw, file="mValsSw.RObject") # M-value using SWAN normalization
-save(mValsSq, file="mValsSq.RObject") # M-value using quantile normalization
+save(gmSetSwFlt, file="gmSetSwFlt.RObject") # MethylSet with SWAN normalization
+save(gmSetQFlt, file="gmSetQFlt.RObject") # MethylSet with quantile normalization
+save(mValsSw, file="mValsSw.RObject") # M values with SWAN normalization
+save(mValsSq, file="mValsSq.RObject") # M values  with quantile normalization
+
+
+#Clustering
+revmval  <- t(mValsSw)
+cluster1 = hclust(dist(revmval, method = "euclidean"), method = "ward.D2")
+png("03_cluster.png")
+plot(cluster1,"Clustering")
+dev.off()
+
+# Effect of normalizing using SWAN
+png("03_Normalization_plot.png")
+par(mfrow=c(1,2))
+plotBetasByType(MSet.raw [,1], main = "Raw")
+plotBetasByType(gmSetSwFlt[,1], main = "SWAN")
+dev.off()
 
 ##Remove individuals that does not have case and control information & one individual from a twin pair
-targets <- targets[complete.cases(targets$CaseControl),]
-targets <- targets[-which(targets$Basename %in% twin$Basename),]
-targets$array <- as.factor(targets$array)
-targets$Disease <- ifelse(targets$CaseControl=="Cases",1,0)
-targets$Disease <- as.factor(targets$Disease)
+targets <- targets[complete.cases(targets$Phenotype),]
+targets$X2D.MATRIX.ID <- as.factor(targets$X2D.MATRIX.ID)
+targets$Phenotype <- ifelse(targets$Phenotype=="PD",1,0)
+targets$Phenotype <- as.factor(targets$Phenotype)
 
 ##Remove these individuals from M-values
-#mValsSw <- mValsSw[,which(colnames(mValsSw) %in% targets$Basename)]
-mValsSq <- mValsSq[,which(colnames(mValsSq) %in% targets$Basename)]
+#mValsSw <- mValsSw[,which(colnames(mValsSw) %in% targets$X2D.MATRIX.ID)]
+#mValsSq <- mValsSq[,which(colnames(mValsSq) %in% targets$X2D.MATRIX.ID)]
+
+#MDS plot on clean individuals
+png("04_MDS_plot.png")
+par(mfrow=c(1,1))
+plotMDS(Mval, labels=targets$Phenotype, col=as.integer(factor(targets$Phenotype)))
+legend("topleft", legend=c("PD", "Control"), pch=16,cex=1.2,col=1:2)
+dev.off()
 
 #Make sure the IDs in targets and M values data in the same order
-#all(targets$Basename == colnames(mValsSw))
-all(targets$Basename == colnames(mValsSq))
+all(targets$X2D.MATRIX.ID == colnames(mValsSw))
+all(targets$X2D.MATRIX.ID == colnames(mValsSq))
 
 #Adjust the probes for covariates
 residuals=apply(mValsSq,1, function(x) batch_lm(as.numeric(x),targets[,covariates]))
@@ -173,23 +218,17 @@ save(invN, file="invN.RObject")
 
 #Change invN into mValsSq
 mValsSq <- invN
-colnames(mValsSq) <- targets$Basename
-all(targets$Basename == colnames(mValsSq))
+colnames(mValsSq) <- targets$X2D.MATRIX.ID
+all(targets$X2D.MATRIX.ID == colnames(mValsSq))
 
 dmps = list(swan=list(),sqn=list())
-Disease = factor(targets$Disease)
+Disease = factor(targets$Phenotype)
 design = model.matrix(~Disease) ## Design matrix
 
-#MDS plot on clean individuals
-png("MDS_plot.png")
-par(mfrow=c(1,1))
-plotMDS(Mval, labels=targets$TUBE.ID, col=as.integer(factor(targets$Phenotype)))
-legend("topleft", legend=c("PD", "Control"), pch=16,cex=1.2,col=1:2)
-dev.off()
 
 #Compare different analysis model
 ##Linear model
-assoc_results = apply(mValsSw,1,function(x) case_ctrl_assoc(x, targets$Disease));
+assoc_results = apply(mValsSw,1,function(x) case_ctrl_assoc(x, targets$Phenotype));
 assoc_results=as.data.frame(matrix(unlist(assoc_results), ncol=5, byrow=T));
 colnames(assoc_results)=c("adjR2","effect","se","t" ,"pval");
 assoc_results$Probe=rownames(mValsSw)
